@@ -12,6 +12,7 @@ namespace Microsoft.Isam.Esent.Collections.Generic
 {
     using System;
     using System.Collections;
+    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Diagnostics.CodeAnalysis;
@@ -99,6 +100,59 @@ namespace Microsoft.Isam.Esent.Collections.Generic
         /// </summary>
         private readonly string databasePath;
 
+        // !EFW - Added support for turning off compression in new databases
+        private bool compressColumns;
+
+        // !EFW - Added support for local cache to speed up read-only operations
+        private ConcurrentDictionary<TKey, TValue> localCache;
+        private int localCacheSize, localCacheFlushCount;
+
+        // !EFW
+        /// <summary>
+        /// Set this to a non-zero value to enable local caching of values to speed up read-only access
+        /// </summary>
+        /// <value>If set to zero, the default, the local cache will not be used and all values will be retrieved
+        /// from the database.  This is only intended for read-only dictionaries.  The local cache will not be
+        /// updated if the dictionary entries are updated.</value>
+        public int LocalCacheSize
+        {
+            get { return localCacheSize; }
+            set
+            {
+                if(value < 1)
+                {
+                    localCacheSize = 0;
+                    localCache = null;
+                }
+                else
+                {
+                    localCacheSize = value;
+                    localCache = new ConcurrentDictionary<TKey, TValue>();
+                }
+
+                localCacheFlushCount = 0;
+            }
+        }
+
+        // !EFW
+        /// <summary>
+        /// This read-only property returns the number of times the local cache was flushed because it filled up
+        /// </summary>
+        /// <value>This can help in figuring out an appropriate local cache size</value>
+        public int LocalCacheFlushCount
+        {
+            get { return localCacheFlushCount; }
+        }
+
+        // !EFW
+        /// <summary>
+        /// This read-only property returns the current number of local cache entries in use
+        /// </summary>
+        public int CurrentLocalCacheCount
+        {
+            get { return (localCache == null) ? 0 : localCache.Count; }
+        }
+
         /// <summary>
         /// Database object associated with the PersistentDictionary.
         /// </summary>
@@ -109,25 +163,40 @@ namespace Microsoft.Isam.Esent.Collections.Generic
         /// </summary>
         private bool alreadyDisposed;
 
+        // !EFW - Added support for specifying whether or not to compress columns when constructed
         /// <summary>
         /// Initializes a new instance of the PersistentDictionary class.
         /// </summary>
         /// <param name="directory">
         /// The directory in which to create the database.
         /// </param>
-        public PersistentDictionary(string directory) : this(directory, null, null)
+        public PersistentDictionary(string directory) : this(directory, true)
         {
-            if (null == directory)
-            {
-                throw new ArgumentNullException("directory");
-            }
         }
 
         /// <summary>
         /// Initializes a new instance of the PersistentDictionary class.
         /// </summary>
+        /// <param name="directory">
+        /// The directory in which to create the database.
+        /// </param>
+        /// <param name="compressColumns">If true, the column data compression option will be enabled when the
+        /// database is created.  If false, the compression option is left off.  This only has an effect when
+        /// creating the database.  It will not change the compression option in existing files.</param>
+        public PersistentDictionary(string directory, bool compressColumns) : this(directory, null, null, compressColumns)
+        {
+            if(null == directory)
+            {
+                throw new ArgumentNullException("directory");
+            }
+        }
+
+
+        /// <summary>
+        /// Initializes a new instance of the PersistentDictionary class.
+        /// </summary>
         /// <param name="customConfig">The custom config to use for creating the PersistentDictionary.</param>
-        public PersistentDictionary(IConfigSet customConfig) : this(null, customConfig, null)
+        public PersistentDictionary(IConfigSet customConfig) : this(null, customConfig, null, true)
         {
             if (null == customConfig)
             {
@@ -140,7 +209,8 @@ namespace Microsoft.Isam.Esent.Collections.Generic
         /// </summary>
         /// <param name="directory">The directory in which to create the database.</param>
         /// <param name="customConfig">The custom config to use for creating the PersistentDictionary.</param>
-        public PersistentDictionary(string directory, IConfigSet customConfig) : this(directory, customConfig, null)
+        public PersistentDictionary(string directory, IConfigSet customConfig) :
+            this(directory, customConfig, null, true)
         {
             if (directory == null && customConfig == null)
             {
@@ -157,7 +227,8 @@ namespace Microsoft.Isam.Esent.Collections.Generic
         /// <param name="directory">
         /// The directory in which to create the database.
         /// </param>
-        public PersistentDictionary(IEnumerable<KeyValuePair<TKey, TValue>> dictionary, string directory) : this(directory, null, dictionary)
+        public PersistentDictionary(IEnumerable<KeyValuePair<TKey, TValue>> dictionary, string directory) :
+            this(directory, null, dictionary, true)
         {
             if (null == directory)
             {
@@ -176,7 +247,8 @@ namespace Microsoft.Isam.Esent.Collections.Generic
         /// </summary>
         /// <param name="dictionary">The IDictionary whose contents are copied to the new dictionary.</param>
         /// <param name="customConfig">The custom config to use for creating the PersistentDictionary.</param>
-        public PersistentDictionary(IEnumerable<KeyValuePair<TKey, TValue>> dictionary, IConfigSet customConfig) : this(null, customConfig, dictionary)
+        public PersistentDictionary(IEnumerable<KeyValuePair<TKey, TValue>> dictionary, IConfigSet customConfig) :
+            this(null, customConfig, dictionary, true)
         {
             if (null == customConfig)
             {
@@ -200,7 +272,7 @@ namespace Microsoft.Isam.Esent.Collections.Generic
             IEnumerable<KeyValuePair<TKey, TValue>> dictionary,
             string directory,
             IConfigSet customConfig)
-            : this(directory, customConfig, dictionary)
+            : this(directory, customConfig, dictionary, true)
         {
             if (directory == null && customConfig == null)
             {
@@ -220,17 +292,24 @@ namespace Microsoft.Isam.Esent.Collections.Generic
         /// <param name="directory">The directory to create the database in.</param>
         /// <param name="customConfig">The custom config to use for creating the PersistentDictionary.</param>
         /// <param name="dictionary">The IDictionary whose contents are copied to the new dictionary.</param>
-        /// <remarks>The constructor can either intialize PersistentDictionary from a directory string, or a full custom config set. But not both.</remarks>
+        /// <param name="compressColumns">If true, the column data compression option will be enabled when the
+        /// database is created.  If false, the compression option is left off.  This only has an effect when
+        /// creating the database.  It will not change the compression option in existing files.</param>
+        /// <remarks>The constructor can either initialize PersistentDictionary from a directory string, or a full custom config set. But not both.</remarks>
         private PersistentDictionary(
             string directory,
             IConfigSet customConfig,
-            IEnumerable<KeyValuePair<TKey, TValue>> dictionary)
+            IEnumerable<KeyValuePair<TKey, TValue>> dictionary,
+            bool compressColumns)
         {
             Contract.Requires(directory != null || customConfig != null); // At least 1 of the two arguments should be set
             if (directory == null && customConfig == null)
             {
                 return; // The calling constructor will throw an error
             }
+
+            // !EFW - Set the column compression option
+            this.compressColumns = compressColumns;
 
             this.converters = new PersistentDictionaryConverters<TKey, TValue>();
             this.schema = new PersistentDictionaryConfig();
@@ -496,13 +575,32 @@ namespace Microsoft.Isam.Esent.Collections.Generic
                 return this.ReturnReadLockedOperation(
                     () =>
                         {
+                            // !EFW - Added support for local caching of values for read-only access
+                            if(localCache != null && localCache.TryGetValue(key, out TValue value))
+                                return value;
+
                             PersistentDictionaryCursor<TKey, TValue> cursor = this.cursors.GetCursor();
                             try
                             {
                                 using (var transaction = cursor.BeginReadOnlyTransaction())
                                 {
                                     cursor.SeekWithKeyNotFoundException(key);
-                                    var value = cursor.RetrieveCurrentValue();
+                                    value = cursor.RetrieveCurrentValue();
+
+                                    // !EFW
+                                    if(localCache != null)
+                                    {
+                                        // If the cache is filled, clear it and start over.  Not the most
+                                        // sophisticated method, but it works.
+                                        if(localCache.Count >= localCacheSize)
+                                        {
+                                            localCache.Clear();
+                                            localCacheFlushCount++;
+                                        }
+
+                                        localCache[key] = value;
+                                    }
+
                                     return value;
                                 }
                             }
@@ -770,6 +868,10 @@ namespace Microsoft.Isam.Esent.Collections.Generic
             return this.ReturnReadLockedOperation(
                 () =>
                     {
+                        // !EFW - Added support for local caching of values for read-only access
+                        if(localCache != null && localCache.ContainsKey(key))
+                            return true;
+
                         PersistentDictionaryCursor<TKey, TValue> cursor = this.cursors.GetCursor();
                         try
                         {
@@ -854,7 +956,12 @@ namespace Microsoft.Isam.Esent.Collections.Generic
             bool found = this.ReturnReadLockedOperation(
                 () =>
                     {
-                        TValue retrievedValue = default(TValue);
+                        TValue retrievedValue = default;
+
+                        // !EFW - Added support for local caching of values for read-only access
+                        if(localCache != null && localCache.TryGetValue(key, out toReturn))
+                            return true;
+
                         PersistentDictionaryCursor<TKey, TValue> cursor = this.cursors.GetCursor();
                         try
                         {
@@ -867,6 +974,20 @@ namespace Microsoft.Isam.Esent.Collections.Generic
                                 {
                                     retrievedValue = cursor.RetrieveCurrentValue();
                                     isPresent = true;
+
+                                    // !EFW
+                                    if(localCache != null)
+                                    {
+                                        // If the cache is filled, clear it and start over.  Not the most
+                                        // sophisticated method, but it works.
+                                        if(localCache.Count >= localCacheSize)
+                                        {
+                                            localCache.Clear();
+                                            localCacheFlushCount++;
+                                        }
+
+                                        localCache[key] = retrievedValue;
+                                    }
                                 }
                             }
 
@@ -1342,7 +1463,9 @@ namespace Microsoft.Isam.Esent.Collections.Generic
 
             Api.JetCreateTable(session, dbid, this.schema.DataTableName, 128, 100, out tableid);
             var columndef = new JET_COLUMNDEF { coltyp = this.converters.KeyColtyp, cp = JET_CP.Unicode, grbit = ColumndefGrbit.None };
-            if (ColumnCanBeCompressed(columndef))
+
+            // !EFW - Only compress columns if wanted
+            if (compressColumns && ColumnCanBeCompressed(columndef))
             {
                 columndef.grbit |= Windows7Grbits.ColumnCompressed;
             }
@@ -1357,7 +1480,9 @@ namespace Microsoft.Isam.Esent.Collections.Generic
                 out keyColumnid);
 
             columndef = new JET_COLUMNDEF { coltyp = this.converters.ValueColtyp, cp = JET_CP.Unicode, grbit = ColumndefGrbit.None };
-            if (ColumnCanBeCompressed(columndef))
+
+            // !EFW - Only compress columns if wanted
+            if(compressColumns && ColumnCanBeCompressed(columndef))
             {
                 columndef.grbit |= Windows7Grbits.ColumnCompressed;
             }

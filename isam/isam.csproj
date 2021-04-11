@@ -29,6 +29,7 @@
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <UseApplicationTrust>false</UseApplicationTrust>
     <BootstrapperEnabled>true</BootstrapperEnabled>
+    <AssemblyOriginatorKeyFile>ESentInterop.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
 
   <!-- The .snk file won't be published to codeplex. -->

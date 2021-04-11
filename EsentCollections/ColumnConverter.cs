@@ -277,11 +277,20 @@ namespace Microsoft.Isam.Esent.Collections.Generic
                 return true;
             }
 
+            // !EFW - Added the option to override the value type requirement.
             // If this isn't a serializable struct, the type definitely isn't serializable
-            if (!(type.IsValueType && type.IsSerializable))
+            if ((!type.IsValueType && !PersistentDictionaryFile.AllowReferenceTypeSerialization) ||
+              !type.IsSerializable)
             {
-                return false;
+                // !EFW - Not perfect, but assume types derived from interfaces will be serializable.  For
+                // example, IList<T> isn't marked serializable but List<T> is.
+                if(!type.IsInterface)
+                    return false;
             }
+
+            // !EFW - If generic, check the type arguments too
+            if(type.IsGenericType)
+                type.GetGenericArguments().All(g => IsSerializable(g));
 
             // This is a serializable struct. Recursively check that all members are serializable.
             // Unlike classes, structs cannot have cycles in their definitions so a simple enumeration

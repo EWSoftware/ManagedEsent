@@ -45,7 +45,8 @@ namespace Microsoft.Isam.Esent.Collections.Generic
                 LogFileSize = 1024, // 1MB logs
                 LogBuffers = 1024, // buffers = 1/2 of logfile
                 MaxTemporaryTables = 0,
-                MaxVerPages = 1024,
+                // !EFW - Quadrupled MaxVerPages as fast loading of large amounts of data in parallel fills the version store
+                MaxVerPages = 4096,
                 NoInformationEvent = true,
                 WaypointLatency = 1,
                 MaxSessions = 256,

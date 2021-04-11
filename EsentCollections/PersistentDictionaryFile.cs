@@ -20,6 +20,16 @@ namespace Microsoft.Isam.Esent.Collections.Generic
     /// </summary>
     public static class PersistentDictionaryFile
     {
+        // !EFW - Added to allow reference type serialization regardless of any potential issues
+        /// <summary>
+        /// This is used to get or set whether or not to allow reference type serialiation
+        /// </summary>
+        /// <value>False by default to disallow reference type serialization to avoid issues with persisted
+        /// copies not containing changes made to the original object.  Set to true to allow serialization in
+        /// cases where you don't care or if the persisted data is used in a read-only fashion when read back in
+        /// and will not change and is thus not affected by the issue.</value>
+        public static bool AllowReferenceTypeSerialization { get; set; }
+
         /// <summary>
         /// Determine if a dictionary database file exists in the specified directory.
         /// </summary>

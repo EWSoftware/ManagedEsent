@@ -17,6 +17,7 @@
     <PublicKeyFile>..\scripts\internal\35MSSharedLib1024.snk</PublicKeyFile>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AssemblyOriginatorKeyFile>ESentInterop.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
 
   <!-- The .snk file won't be published to codeplex. -->
